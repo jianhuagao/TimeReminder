@@ -17,6 +17,76 @@ TargetHour   := IniRead(iniPath, "Time", "TargetHour", 11)
 TargetMinute := IniRead(iniPath, "Time", "TargetMinute", 0)
 
 ; ========================
+; 全局变量声明
+; ========================
+configGui := ""
+
+; ========================
+; 启动时弹窗配置
+; ========================
+
+ShowConfigDialog() {
+    global TargetHour, TargetMinute, configGui
+    
+    configGui := Gui()
+    configGui.Title := "时间提醒器配置"
+    configGui.MarginX := 15
+    configGui.MarginY := 15
+    
+    configGui.AddText("w180", "请输入目标时间：")
+    configGui.AddText("", "时Hour:")
+    hourEdit := configGui.AddEdit("w50 vHourValue", TargetHour)
+    configGui.AddText("", "分Minute:")
+    minuteEdit := configGui.AddEdit("w50 vMinuteValue", TargetMinute)
+    
+    configGui.AddButton("w80 h30 Default", "ok").OnEvent("Click", ConfigOK)
+    configGui.AddButton("w80 h30 x+10", "cancel").OnEvent("Click", ConfigCancel)
+    
+    configGui.Show("w350 h220")
+}
+
+ConfigOK(GuiCtrlObj, Info) {
+    global configGui, TargetHour, TargetMinute, iniPath
+    
+    configGui.Submit()
+    
+    newHour := configGui["HourValue"].Value
+    newMinute := configGui["MinuteValue"].Value
+    
+    ; 验证输入
+    if !IsInteger(newHour) || !IsInteger(newMinute) {
+        MsgBox("请输入有效的数字！")
+        return
+    }
+    
+    newHour := newHour + 0
+    newMinute := newMinute + 0
+    
+    if (newHour < 0 || newHour > 23 || newMinute < 0 || newMinute > 59) {
+        MsgBox("时间格式无效！小时应在0-23之间，分钟应在0-59之间。")
+        return
+    }
+    
+    ; 更新全局变量
+    TargetHour := newHour
+    TargetMinute := newMinute
+    
+    ; 保存到配置文件
+    IniWrite(TargetHour, iniPath, "Time", "TargetHour")
+    IniWrite(TargetMinute, iniPath, "Time", "TargetMinute")
+    
+    configGui.Destroy()
+}
+
+ConfigCancel(GuiCtrlObj, Info) {
+    global configGui
+    configGui.Destroy()
+}
+
+; 显示配置对话框
+ShowConfigDialog()
+
+; ========================
 ; 多阶段提醒配置（分钟）
 ; ========================
 
