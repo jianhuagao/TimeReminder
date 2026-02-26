@@ -3,22 +3,29 @@
 Persistent true
 
 ; =========================================================
-; TimeReminder 小组件风格成品版（1717 1818 / 标题栏拖动 / 右下角齿轮 / 圆角稳定）
+; TimeReminder 小组件风格成品版（稳定版）
+; - 输入：1717 1818（空格分隔，每组4位；兼容 17:17,18:18 自动清洗）
+; - 标题栏拖动（窗口级坐标命中，稳定）
+; - 右下角“...”弹出菜单（与托盘菜单同功能）
+; - 不用 Func() / 不用 lambda，兼容旧 v2，避免 Invalid base
 ; =========================================================
 
+; ------------------------
+; ini
+; ------------------------
 iniPath := A_ScriptDir "\TimeReminder.ini"
 
 if !FileExist(iniPath) {
-    IniWrite("1717", iniPath, "Time", "Targets")                ; 多目标：1717 1818 2030
-    IniWrite(0,      iniPath, "UI",   "AlwaysShowCountdown")    ; 0/1 常驻浮窗
-    IniWrite(230,    iniPath, "UI",   "Alpha")                  ; 0-255
-    IniWrite(18,     iniPath, "UI",   "Radius")                 ; 0-80
+    IniWrite("1717", iniPath, "Time", "Targets")
+    IniWrite(1,      iniPath, "UI",   "AlwaysShowCountdown")
+    IniWrite(230,    iniPath, "UI",   "Alpha")
+    IniWrite(18,     iniPath, "UI",   "Radius")
     IniWrite("",     iniPath, "UI",   "CountdownX")
     IniWrite("",     iniPath, "UI",   "CountdownY")
-    IniWrite(0,      iniPath, "App",  "StartWithWindows")       ; 0/1 开机启动
-    IniWrite(0,      iniPath, "App",  "ShowConfigOnStart")      ; 0/1 启动弹配置
-    IniWrite(0,      iniPath, "App",  "DoNotDisturb")           ; 0/1 勿扰
-    IniWrite(1,      iniPath, "App",  "MuteOnFullscreen")       ; 0/1 全屏静音
+    IniWrite(0,      iniPath, "App",  "StartWithWindows")
+    IniWrite(1,      iniPath, "App",  "ShowConfigOnStart")
+    IniWrite(0,      iniPath, "App",  "DoNotDisturb")
+    IniWrite(1,      iniPath, "App",  "MuteOnFullscreen")
 }
 
 ; ------------------------
@@ -36,25 +43,28 @@ DoNotDisturb := IniRead(iniPath, "App", "DoNotDisturb", 0)
 MuteOnFullscreen := IniRead(iniPath, "App", "MuteOnFullscreen", 1)
 
 ; ------------------------
+; 小组件尺寸/布局（用于坐标命中判断）
+; ------------------------
+WidgetW := 276
+WidgetH := 132
+TitleH  := 34
+MenuBtnW := 34
+MenuBtnH := 28
+
+; ------------------------
 ; 全局状态
 ; ------------------------
 configGui := ""
 countdownGui := 0
 line1Ctrl := 0
 line2Ctrl := 0
-gearCtrl := 0
-closeCtrl := 0
+menuBtnCtrl := 0
 
-gearHover := false
-closeHover := false
+widgetHidden := false
 
-widgetHidden := false  ; 点 × 后仅隐藏小组件（不退出）
-
-ReminderStages := [5, 2, 1]      ; 提前分钟
-
+ReminderStages := [5, 2, 1]
 TargetsArr := []
 TargetsSec := []
-RebuildTargets()
 
 isEnabled := true
 triggered := Map()
@@ -62,104 +72,18 @@ reachedNotified := false
 lastRemainSec := ""
 currentTargetSec := ""
 
-; 位置写入节流
 lastX := ""
 lastY := ""
 
-; ------------------------
-; 托盘菜单
-; ------------------------
-BuildTrayMenu()
-ApplyStartupSetting(StartWithWindows)
+widgetMenu := Menu()
 
-BuildTrayMenu() {
-    global isEnabled, AlwaysShowCountdown, DoNotDisturb, StartWithWindows, widgetHidden
+; =========================================================
+; 逻辑函数
+; =========================================================
 
-    A_TrayMenu.Delete()
-    A_TrayMenu.Add("打开配置", (*) => ShowConfigDialog())
-
-    ; 显示/隐藏小组件
-    A_TrayMenu.Add(widgetHidden ? "显示小组件" : "隐藏小组件", (*) => ToggleWidgetVisibility())
-
-    A_TrayMenu.Add(isEnabled ? "暂停提醒" : "继续提醒", (*) => ToggleEnabled())
-    A_TrayMenu.Add(DoNotDisturb ? "关闭勿扰模式" : "开启勿扰模式", (*) => ToggleDND())
-    A_TrayMenu.Add(AlwaysShowCountdown ? "关闭常驻浮窗" : "开启常驻浮窗", (*) => ToggleAlwaysShow())
-    A_TrayMenu.Add(StartWithWindows ? "关闭开机启动" : "开启开机启动", (*) => ToggleStartup())
-    A_TrayMenu.Add("立即刷新", (*) => ForceRefresh())
-    A_TrayMenu.Add()
-    A_TrayMenu.Add("退出", (*) => ExitApp())
-}
-
-ToggleWidgetVisibility() {
-    global widgetHidden
-    widgetHidden := !widgetHidden
-    if widgetHidden {
-        HideWidgetOnly()
-    } else {
-        ShowWidgetOnly()
-    }
-    BuildTrayMenu()
-}
-
-ToggleEnabled() {
-    global isEnabled
-    isEnabled := !isEnabled
-    BuildTrayMenu()
-}
-
-ToggleAlwaysShow() {
-    global AlwaysShowCountdown, iniPath
-    AlwaysShowCountdown := !AlwaysShowCountdown
-    IniWrite(AlwaysShowCountdown ? 1 : 0, iniPath, "UI", "AlwaysShowCountdown")
-    BuildTrayMenu()
-    if !AlwaysShowCountdown
-        HideCountdown()
-}
-
-ToggleDND() {
-    global DoNotDisturb, iniPath
-    DoNotDisturb := !DoNotDisturb
-    IniWrite(DoNotDisturb ? 1 : 0, iniPath, "App", "DoNotDisturb")
-    BuildTrayMenu()
-}
-
-ToggleStartup() {
-    global StartWithWindows, iniPath
-    StartWithWindows := !StartWithWindows
-    IniWrite(StartWithWindows ? 1 : 0, iniPath, "App", "StartWithWindows")
-    ApplyStartupSetting(StartWithWindows)
-    BuildTrayMenu()
-}
-
-ForceRefresh() {
-    global triggered, reachedNotified, lastRemainSec, currentTargetSec
-    triggered.Clear()
-    reachedNotified := false
-    lastRemainSec := ""
-    currentTargetSec := ""
-}
-
-; ------------------------
-; 启动是否弹配置
-; ------------------------
-if (ShowConfigOnStart + 0 = 1)
-    ShowConfigDialog()
-
-; ------------------------
-; 主循环
-; ------------------------
-SetTimer(CheckTime, 1000)
-SetTimer(SaveCountdownPos, 1000)
-
-CheckTime() {
+CheckTime(*) {
     global isEnabled, AlwaysShowCountdown, widgetHidden
     global triggered, reachedNotified, lastRemainSec, currentTargetSec
-
-    if widgetHidden {
-        ; 小组件被用户隐藏时，不要自动弹出来
-        ; 但后台逻辑照常跑（提醒仍会发）
-        ; 如果你希望隐藏后连提醒也停：可以在这里 return
-    }
 
     if !isEnabled {
         if AlwaysShowCountdown && !widgetHidden
@@ -242,74 +166,64 @@ IsFullscreenActive() {
 }
 
 ; =========================================================
-; 小组件浮窗（标题栏拖动 + × 隐藏 + 右下角齿轮 + 底部分割线）
+; 小组件 UI
 ; =========================================================
 
 EnsureCountdownGui() {
-    global countdownGui, line1Ctrl, line2Ctrl, gearCtrl, closeCtrl
-    global Alpha, Radius, CountdownX, CountdownY
-    global gearHover, closeHover
+    global countdownGui, line1Ctrl, line2Ctrl, menuBtnCtrl
+    global Alpha, CountdownX, CountdownY
+    global WidgetW, WidgetH, TitleH, MenuBtnW, MenuBtnH
 
     if countdownGui
         return
 
-    ; 尺寸
-    W := 276
-    H := 132
-    TitleH := 34
+    W := WidgetW, H := WidgetH, TH := TitleH
 
     countdownGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
     countdownGui.BackColor := "202020"
 
-    ; ---- 标题栏背景（深色，可拖动）----
-    titleBg := countdownGui.AddText("x0 y0 w" W " h" TitleH " Background0F0F0F", "")
-    titleBg.OnEvent("Click", (*) => StartDragCountdown())
+    ; ---- 标题栏背景（深色）----
+    countdownGui.AddText("x0 y0 w" W " h" TH " Background0F0F0F", "")
+    ; 标题栏底部分割线
+    countdownGui.AddText("x0 y" (TH-1) " w" W " h1 Background2A2A2A", "")
 
     ; 图标
     countdownGui.SetFont("s11 cEDEDED", "Segoe UI")
-    icon := countdownGui.AddText("x12 y7 w20 h20 Center Background0F0F0F", "🕒")
-    icon.OnEvent("Click", (*) => StartDragCountdown())
+    countdownGui.AddText("x12 y7 w20 h20 Center Background0F0F0F", "🕒")
 
-    ; 标题（y=8 + TitleH=34 视觉更居中）
+    ; 标题
     countdownGui.SetFont("s11 cEDEDED", "Segoe UI Semibold")
-    title := countdownGui.AddText("x36 y8 w190 h18 Background0F0F0F", "Time Reminder")
-    title.OnEvent("Click", (*) => StartDragCountdown())
+    countdownGui.AddText("x36 y8 w190 h18 Background0F0F0F", "Time Reminder")
 
-    ; × 关闭按钮（只隐藏小组件）
-    countdownGui.SetFont("s12 cBFBFBF", "Segoe UI")
-    closeCtrl := countdownGui.AddText("x" (W-34) " y6 w28 h22 Center Background0F0F0F 0x100", "✕")
-    closeCtrl.OnEvent("Click", (*) => HideWidgetOnly())
-    closeHover := false
-
-    ; 标题栏底部细分割线（更精致）
-    countdownGui.AddText("x0 y" (TitleH-1) " w" W " h1 Background2A2A2A", "")
-
-    ; ---- 内容区背景（略浅）----
-    contentBg := countdownGui.AddText("x0 y" TitleH " w" W " h" (H-TitleH) " Background202020", "")
-    contentBg.OnEvent("Click", (*) => ShowConfigDialog())
+    ; ---- 内容区背景（先画背景，再画文字，最后画按钮，避免被盖住）----
+    countdownGui.AddText("x0 y" TH " w" W " h" (H-TH) " Background202020", "")
+    ; 底部分割线
+    countdownGui.AddText("x0 y" (H-1) " w" W " h1 Background2A2A2A", "")
 
     ; 两行文字
     countdownGui.SetFont("s11 cDADADA", "Segoe UI")
-    line1Ctrl := countdownGui.AddText("x0 y" (TitleH+10) " w" W " h18 Center Background202020", "提醒时间：--:--")
-    line1Ctrl.OnEvent("Click", (*) => ShowConfigDialog())
+    line1Ctrl := countdownGui.AddText(
+        "x0 y" (TH+10) " w" W " h18 Center Background202020",
+        "提醒时间：--:--"
+    )
 
     countdownGui.SetFont("s22 cFFFFFF", "Segoe UI Semibold")
-    line2Ctrl := countdownGui.AddText("x0 y" (TitleH+34) " w" W " h40 Center Background202020", "倒计时--:--")
-    line2Ctrl.OnEvent("Click", (*) => ShowConfigDialog())
+    line2Ctrl := countdownGui.AddText(
+        "x0 y" (TH+34) " w" W " h40 Center Background202020",
+        "倒计时--:--"
+    )
 
-    ; ⚙ 齿轮移动到右下角（你要的）
-    countdownGui.SetFont("s12 cBFBFBF", "Segoe UI")
-    gearCtrl  := countdownGui.AddText("x" (W-34) " y" (H-28) " w28 h20 Center Background202020 0x100", "⚙")
-    gearCtrl.OnEvent("Click", (*) => ShowConfigDialog())
-    gearHover := false
+    ; ✅ 右下角菜单按钮：最后创建，保证在最上层可见
+    countdownGui.SetFont("s13 cBFBFBF", "Segoe UI")
+    menuBtnCtrl := countdownGui.AddText(
+        "x" (W-MenuBtnW) " y" (H-MenuBtnH) " w" MenuBtnW " h" MenuBtnH " Center Background202020",
+        "⋯"  ; 若仍不显示，可改为 "..."
+    )
 
-    ; 底部分割线（你要的 ②）
-    countdownGui.AddText("x0 y" (H-1) " w" W " h1 Background2A2A2A", "")
-
-    ; 显示位置：优先 ini 记忆
-    if (CountdownX != "" && CountdownY != "")
+    ; ---- 显示位置：优先 ini 记忆 ----
+    if (CountdownX != "" && CountdownY != "") {
         countdownGui.Show("x" CountdownX " y" CountdownY " w" W " h" H " NoActivate")
-    else {
+    } else {
         x := A_ScreenWidth - (W + 18)
         y := A_ScreenHeight - (H + 60)
         countdownGui.Show("x" x " y" y " w" W " h" H " NoActivate")
@@ -318,49 +232,8 @@ EnsureCountdownGui() {
     ; 半透明
     try WinSetTransparent(Alpha, "ahk_id " countdownGui.Hwnd)
 
-    ; 圆角（稳定）
+    ; 圆角（你的 ApplyRoundedRegion() 保持不变）
     ApplyRoundedRegion()
-
-    ; hover（×/⚙ 变亮）
-    OnMessage(0x200, WM_MOUSEMOVE_WIDGET) ; WM_MOUSEMOVE
-}
-
-WM_MOUSEMOVE_WIDGET(wParam, lParam, msg, hwnd) {
-    global countdownGui, gearCtrl, closeCtrl, gearHover, closeHover
-    if !countdownGui
-        return
-    if (hwnd != countdownGui.Hwnd)
-        return
-
-    try ctrlHwnd := DllCall("user32\ChildWindowFromPointEx", "ptr", hwnd, "int64", lParam, "uint", 1, "ptr")
-    catch
-        return
-
-    overGear := (gearCtrl && ctrlHwnd = gearCtrl.Hwnd)
-    overClose := (closeCtrl && ctrlHwnd = closeCtrl.Hwnd)
-
-    if (overGear && !gearHover) {
-        gearHover := true
-        try gearCtrl.Opt("cFFFFFF")
-    } else if (!overGear && gearHover) {
-        gearHover := false
-        try gearCtrl.Opt("cBFBFBF")
-    }
-
-    if (overClose && !closeHover) {
-        closeHover := true
-        try closeCtrl.Opt("cFFFFFF")
-    } else if (!overClose && closeHover) {
-        closeHover := false
-        try closeCtrl.Opt("cBFBFBF")
-    }
-}
-
-StartDragCountdown() {
-    global countdownGui
-    if !countdownGui
-        return
-    PostMessage(0xA1, 2, 0, , "ahk_id " countdownGui.Hwnd) ; WM_NCLBUTTONDOWN + HTCAPTION
 }
 
 ApplyRoundedRegion() {
@@ -380,9 +253,9 @@ ApplyRoundedRegion() {
     }
 }
 
-SaveCountdownPos() {
-    global countdownGui, iniPath, lastX, lastY, CountdownX, CountdownY
-    if !countdownGui
+SaveCountdownPos(*) {
+    global countdownGui, iniPath, lastX, lastY, CountdownX, CountdownY, widgetHidden
+    if !countdownGui || widgetHidden
         return
     try {
         WinGetPos(&x, &y, , , "ahk_id " countdownGui.Hwnd)
@@ -416,28 +289,6 @@ ShowCountdownStatus(line1, line2) {
     line2Ctrl.Text := line2
 }
 
-; ×：只隐藏小组件
-HideWidgetOnly() {
-    global countdownGui, widgetHidden
-    widgetHidden := true
-    try if countdownGui
-        countdownGui.Hide()
-    BuildTrayMenu()
-}
-
-ShowWidgetOnly() {
-    global countdownGui, widgetHidden, CountdownX, CountdownY
-    widgetHidden := false
-    EnsureCountdownGui()
-    try {
-        if (CountdownX != "" && CountdownY != "")
-            countdownGui.Show("x" CountdownX " y" CountdownY " NoActivate")
-        else
-            countdownGui.Show("NoActivate")
-    }
-}
-
-; 非常驻模式下需要彻底销毁窗口（省资源）
 HideCountdown() {
     global countdownGui
     if countdownGui {
@@ -446,11 +297,157 @@ HideCountdown() {
     }
 }
 
+HideWidgetOnly(*) {
+    global countdownGui, widgetHidden
+    widgetHidden := true
+    try if countdownGui
+        countdownGui.Hide()
+    BuildTrayMenu()
+    BuildWidgetMenu()
+}
+
+ShowWidgetOnly(*) {
+    global countdownGui, widgetHidden, CountdownX, CountdownY, WidgetW, WidgetH
+    widgetHidden := false
+    EnsureCountdownGui()
+    try {
+        if (CountdownX != "" && CountdownY != "")
+            countdownGui.Show("x" CountdownX " y" CountdownY " w" WidgetW " h" WidgetH " NoActivate")
+        else
+            countdownGui.Show("NoActivate")
+    }
+    BuildTrayMenu()
+    BuildWidgetMenu()
+}
+
+StartDragCountdown() {
+    global countdownGui
+    if !countdownGui
+        return
+    PostMessage(0xA1, 2, 0, , "ahk_id " countdownGui.Hwnd)
+}
+
 ; =========================================================
-; 配置窗口（1717 1818 2030）
+; 窗口级点击命中（稳定）
+; =========================================================
+WM_LBUTTONDOWN_WIDGET(wParam, lParam, msg, hwnd) {
+    global countdownGui, widgetHidden
+    global WidgetW, WidgetH, TitleH, MenuBtnW, MenuBtnH
+
+    if !countdownGui || widgetHidden
+        return
+    if (hwnd != countdownGui.Hwnd)
+        return
+
+    x := lParam & 0xFFFF
+    y := (lParam >> 16) & 0xFFFF
+
+    if (x >= WidgetW - MenuBtnW && y >= WidgetH - MenuBtnH) {
+        ShowWidgetMenu()
+        return 0
+    }
+
+    if (y < TitleH) {
+        StartDragCountdown()
+        return 0
+    }
+
+    ShowConfigDialog()
+    return 0
+}
+
+; =========================================================
+; 菜单（托盘 & 小组件共用）
 ; =========================================================
 
-ShowConfigDialog() {
+ShowWidgetMenu(*) {
+    BuildWidgetMenu()
+    try widgetMenu.Show()
+}
+
+BuildWidgetMenu() {
+    global widgetMenu, widgetHidden, isEnabled, DoNotDisturb, AlwaysShowCountdown, StartWithWindows
+    widgetMenu.Delete()
+    widgetMenu.Add("打开配置", ShowConfigDialog)
+    widgetMenu.Add(widgetHidden ? "显示小组件" : "隐藏小组件", ToggleWidgetVisibility)
+    widgetMenu.Add(isEnabled ? "暂停提醒" : "继续提醒", ToggleEnabled)
+    widgetMenu.Add(DoNotDisturb ? "关闭勿扰模式" : "开启勿扰模式", ToggleDND)
+    widgetMenu.Add(AlwaysShowCountdown ? "关闭常驻浮窗" : "开启常驻浮窗", ToggleAlwaysShow)
+    widgetMenu.Add(StartWithWindows ? "关闭开机启动" : "开启开机启动", ToggleStartup)
+    widgetMenu.Add("立即刷新", ForceRefresh)
+    widgetMenu.Add()
+    widgetMenu.Add("退出", (*) => ExitApp()) ; 这个直接用 lambda 最兼容
+}
+
+BuildTrayMenu() {
+    global isEnabled, AlwaysShowCountdown, DoNotDisturb, StartWithWindows, widgetHidden
+    A_TrayMenu.Delete()
+    A_TrayMenu.Add("打开配置", ShowConfigDialog)
+    A_TrayMenu.Add(widgetHidden ? "显示小组件" : "隐藏小组件", ToggleWidgetVisibility)
+    A_TrayMenu.Add(isEnabled ? "暂停提醒" : "继续提醒", ToggleEnabled)
+    A_TrayMenu.Add(DoNotDisturb ? "关闭勿扰模式" : "开启勿扰模式", ToggleDND)
+    A_TrayMenu.Add(AlwaysShowCountdown ? "关闭常驻浮窗" : "开启常驻浮窗", ToggleAlwaysShow)
+    A_TrayMenu.Add(StartWithWindows ? "关闭开机启动" : "开启开机启动", ToggleStartup)
+    A_TrayMenu.Add("立即刷新", ForceRefresh)
+    A_TrayMenu.Add()
+    A_TrayMenu.Add("退出", (*) => ExitApp())
+}
+
+ToggleWidgetVisibility(*) {
+    global widgetHidden
+    if widgetHidden
+        ShowWidgetOnly()
+    else
+        HideWidgetOnly()
+}
+
+ToggleEnabled(*) {
+    global isEnabled
+    isEnabled := !isEnabled
+    BuildTrayMenu()
+    BuildWidgetMenu()
+}
+
+ToggleAlwaysShow(*) {
+    global AlwaysShowCountdown, iniPath
+    AlwaysShowCountdown := !AlwaysShowCountdown
+    IniWrite(AlwaysShowCountdown ? 1 : 0, iniPath, "UI", "AlwaysShowCountdown")
+    BuildTrayMenu()
+    BuildWidgetMenu()
+    if !AlwaysShowCountdown
+        HideCountdown()
+}
+
+ToggleDND(*) {
+    global DoNotDisturb, iniPath
+    DoNotDisturb := !DoNotDisturb
+    IniWrite(DoNotDisturb ? 1 : 0, iniPath, "App", "DoNotDisturb")
+    BuildTrayMenu()
+    BuildWidgetMenu()
+}
+
+ToggleStartup(*) {
+    global StartWithWindows, iniPath
+    StartWithWindows := !StartWithWindows
+    IniWrite(StartWithWindows ? 1 : 0, iniPath, "App", "StartWithWindows")
+    ApplyStartupSetting(StartWithWindows)
+    BuildTrayMenu()
+    BuildWidgetMenu()
+}
+
+ForceRefresh(*) {
+    global triggered, reachedNotified, lastRemainSec, currentTargetSec
+    triggered.Clear()
+    reachedNotified := false
+    lastRemainSec := ""
+    currentTargetSec := ""
+}
+
+; =========================================================
+; 配置窗口
+; =========================================================
+
+ShowConfigDialog(*) {
     global configGui
     global TargetsStr, AlwaysShowCountdown, Alpha, Radius
     global StartWithWindows, ShowConfigOnStart, DoNotDisturb, MuteOnFullscreen
@@ -494,6 +491,7 @@ ConfigOK(*) {
     global configGui, iniPath
     global TargetsStr, AlwaysShowCountdown, Alpha, Radius
     global StartWithWindows, ShowConfigOnStart, DoNotDisturb, MuteOnFullscreen
+    global countdownGui
 
     configGui.Submit()
 
@@ -541,9 +539,10 @@ ConfigOK(*) {
     ApplyStartupSetting(StartWithWindows)
     RebuildTargets()
     ForceRefresh()
-    BuildTrayMenu()
 
-    ; 立即应用 UI
+    BuildTrayMenu()
+    BuildWidgetMenu()
+
     if (countdownGui) {
         try WinSetTransparent(Alpha, "ahk_id " countdownGui.Hwnd)
         ApplyRoundedRegion()
@@ -562,7 +561,7 @@ ConfigCancel(*) {
 }
 
 ; =========================================================
-; 多目标解析（输入：1717 1818；兼容：17:17,18:18）
+; 多目标解析
 ; =========================================================
 
 RebuildTargets() {
@@ -579,8 +578,7 @@ ParseTargets(str) {
     cleaned := StrReplace(cleaned, ";", " ")
     cleaned := StrReplace(cleaned, "`n", " ")
     cleaned := StrReplace(cleaned, "`r", " ")
-    cleaned := StrReplace(cleaned, ":", "") ; 17:17 -> 1717
-
+    cleaned := StrReplace(cleaned, ":", "")
     while InStr(cleaned, "  ")
         cleaned := StrReplace(cleaned, "  ", " ")
 
@@ -591,16 +589,13 @@ ParseTargets(str) {
             continue
         if !RegExMatch(t, "^\d{4}$")
             continue
-
         hh := SubStr(t, 1, 2) + 0
         mm := SubStr(t, 3, 2) + 0
         if (hh < 0 || hh > 23 || mm < 0 || mm > 59)
             continue
-
         tokens.Push(Format("{:02}{:02}", hh, mm))
     }
 
-    ; 去重 + 插入排序
     seen := Map()
     sorted := []
     for _, t in tokens {
@@ -652,7 +647,7 @@ GetNextTargetSec(nowSec) {
 }
 
 ; =========================================================
-; 开机启动：写 Startup 快捷方式
+; 开机启动
 ; =========================================================
 
 ApplyStartupSetting(enable) {
@@ -673,3 +668,20 @@ ApplyStartupSetting(enable) {
             FileDelete(link)
     }
 }
+
+; =========================================================
+; 初始化（必须放最后，避免旧解析器误判）
+; =========================================================
+
+RebuildTargets()
+BuildWidgetMenu()
+BuildTrayMenu()
+ApplyStartupSetting(StartWithWindows)
+
+SetTimer(CheckTime, 1000)
+SetTimer(SaveCountdownPos, 1000)
+
+OnMessage(0x201, WM_LBUTTONDOWN_WIDGET)
+
+if (ShowConfigOnStart + 0 = 1)
+    ShowConfigDialog()
